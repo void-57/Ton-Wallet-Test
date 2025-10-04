@@ -39,7 +39,7 @@
     <button id="recoverBtn">Recover</button>
     <br /><br />
 
-    <label for="inputKey">Enter FLO/BTC private key or TON secret (hex):</label>
+    <label for="inputKey">Enter TON/FLO/BTC private key:</label>
     <input type="text" id="inputKey" />
 
     <pre id="output"></pre>
@@ -64,7 +64,7 @@
       document.getElementById("recoverBtn").onclick = async () => {
         const inp = document.getElementById("inputKey").value.trim();
         if (!inp) {
-          output.textContent = "Please enter a WIF or TON secret hex.";
+          output.textContent = "Please enter a private key (TON/BTC/FLO)";
           return;
         }
         try {
