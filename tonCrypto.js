@@ -191,9 +191,7 @@
 
     result.TON = {
       address: tonAddr,
-      pubKeyHex: bytesToHex(kp.publicKey),
-      privKeyHex: bytesToHex(tonSeed),
-      secretKeyHex: bytesToHex(kp.secretKey),
+      privateKey: bytesToHex(kp.secretKey),
     };
     return result;
   };
