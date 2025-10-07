@@ -2,11 +2,13 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>TON Wallet</title>
     <style>
       body {
         font-family: monospace;
         padding: 20px;
+        background: #f7f8fa;
       }
       textarea {
         width: 100%;
@@ -17,6 +19,15 @@
         margin: 5px;
         padding: 8px 12px;
         font-size: 14px;
+        background-color: #007bff;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
       }
       pre {
         background: #f4f4f4;
@@ -25,24 +36,85 @@
         white-space: pre-wrap;
         word-wrap: break-word;
       }
-      #inputKey {
+      #inputKey,
+      #addressInput {
         width: 100%;
         padding: 8px;
         font-size: 14px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        margin-right: 8px;
+      }
+      #walletSection,
+      #explorerSection,
+      #balances,
+      #transactions {
+        background: white;
+        border-radius: 8px;
+        padding: 16px;
+        margin-top: 20px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+      }
+      .tx {
+        border-bottom: 1px solid #eee;
+        padding: 10px 0;
+      }
+      .tx:last-child {
+        border-bottom: none;
+      }
+      .tx small {
+        color: #555;
+        display: block;
+        margin-top: 3px;
+      }
+      #pagination {
+        margin-top: 15px;
+        display: flex;
+        justify-content: space-between;
       }
     </style>
   </head>
   <body>
     <h1>TON Wallet Test</h1>
 
-    <button id="generateBtn">Generate</button>
-    <button id="recoverBtn">Recover</button>
-    <br /><br />
+    <!-- Generate and Recover -->
+    <div id="walletSection">
+      <h2>Generate and Recover TON Address </h2>
+      <button id="generateBtn">Generate</button>
+      <button id="recoverBtn">Recover</button>
+      <br /><br />
 
-    <label for="inputKey">Enter TON/FLO/BTC private key:</label>
-    <input type="text" id="inputKey" />
+      <label for="inputKey">Enter TON/FLO/BTC private key:</label>
+      <input type="text" id="inputKey" />
 
-    <pre id="output"></pre>
+      <pre id="output"></pre>
+    </div>
+
+    <!-- Balance and History -->
+    <div id="explorerSection">
+      <h2>Transactions</h2>
+      <input
+        id="addressInput"
+        placeholder="Enter TON Address (EQ... or UQ...)"
+      />
+      <button id="loadWallet">Search</button>
+
+      <div id="balances">
+        <h3>Balances</h3>
+        <p><b>TON:</b> <span id="tonBalance">-</span></p>
+        <p><b>USDT:</b> <span id="usdtBalance">-</span></p>
+      </div>
+
+      <div id="transactions" style="display: none">
+        <h3>Transaction History</h3>
+        <p id="status">Status: idle</p>
+        <div id="txList"></div>
+        <div id="pagination">
+          <button id="prevBtn" disabled>⬅ Previous</button>
+          <button id="nextBtn" disabled>Next ➡</button>
+        </div>
+      </div>
+    </div>
 
     <script src="lib.toncoin.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/tweetnacl/1.0.3/nacl.min.js"></script>
@@ -50,6 +122,7 @@
     <script src="tonCrypto.js"></script>
 
     <script>
+      
       const output = document.getElementById("output");
 
       document.getElementById("generateBtn").onclick = async () => {
@@ -74,6 +147,270 @@
           output.textContent = "Error: " + e.message;
         }
       };
+
+    
+      const API = "https://toncenter.com/api/v2";
+      const API_KEY =
+        "62bbf0ea18f197520db44c23d961a4213f373c4c08bf5cb818b722b85192ca63";
+      const USDT_MASTER = "EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs";
+
+      let currentAddress = "";
+
+     
+      let transactions = [];
+      let beforeLt = null;
+      let allFetched = false;
+      let currentPage = 0;
+      const pageSize = 10;
+      const addrCache = new Map();
+
+      document
+        .getElementById("loadWallet")
+        .addEventListener("click", async () => {
+          const addr = document.getElementById("addressInput").value.trim();
+          if (!addr) return alert("Enter a valid TON address");
+          await loadWallet(addr);
+        });
+
+      async function loadWallet(address) {
+        document.getElementById("tonBalance").innerText = "Loading...";
+        document.getElementById("usdtBalance").innerText = "Loading...";
+
+        currentAddress = address;
+
+        beforeLt = null;
+        allFetched = false;
+        transactions = [];
+        currentPage = 0;
+        document.getElementById("transactions").style.display = "block";
+        document.getElementById("txList").innerHTML =
+          "<p>Loading transactions...</p>";
+
+        await Promise.all([
+          getTonBalance(address),
+          getUsdtBalance(address),
+          fetchTransactions(address),
+        ]);
+
+        await renderPage();
+      }
+
+      //   Get TON balance
+      async function getTonBalance(address) {
+        try {
+          const res = await fetch(
+            `${API}/getAddressInformation?address=${address}`,
+            {
+              headers: { "X-API-Key": API_KEY },
+            }
+          );
+          const data = await res.json();
+          const balance = (data?.result?.balance || 0) / 1e9;
+          document.getElementById("tonBalance").innerText = balance.toFixed(6);
+        } catch (err) {
+          console.error("TON balance error:", err);
+          document.getElementById("tonBalance").innerText = "0.000000";
+        }
+      }
+
+      //  Get USDT balance
+      async function getUsdtBalance(ownerAddress) {
+        try {
+          console.log("Getting USDT balance for:", ownerAddress);
+
+          const response = await fetch(
+            `https://tonapi.io/v2/accounts/${ownerAddress}/jettons`
+          );
+
+          if (!response.ok) {
+            throw new Error(`TonAPI error: ${response.status}`);
+          }
+
+          const data = await response.json();
+          console.log("TonAPI jettons response:", data);
+
+          const usdtJetton = data.balances?.find(
+            (jetton) =>
+              jetton.jetton?.address === USDT_MASTER ||
+              jetton.jetton?.symbol === "USDT" ||
+              jetton.jetton?.name?.includes("Tether")
+          );
+
+          if (usdtJetton) {
+            const balance = parseInt(usdtJetton.balance) / 1e6;
+            console.log("USDT balance found:", balance);
+            document.getElementById("usdtBalance").innerText =
+              balance.toFixed(6);
+          } else {
+            console.log(" No USDT balance found");
+            document.getElementById("usdtBalance").innerText = "0.000000";
+          }
+        } catch (err) {
+          console.error("USDT balance error:", err);
+          document.getElementById("usdtBalance").innerText = "0.000000";
+        }
+      }
+
+      async function convertToUserFriendly(rawAddr) {
+        if (!rawAddr || !rawAddr.includes(":")) return rawAddr;
+        if (addrCache.has(rawAddr)) return addrCache.get(rawAddr);
+
+        try {
+          const res = await fetch(
+            `https://toncenter.com/api/v2/detectAddress?address=${encodeURIComponent(
+              rawAddr
+            )}`,
+            {
+              headers: { "X-API-Key": API_KEY },
+            }
+          );
+          const data = await res.json();
+          const friendly =
+            data?.result?.bounceable?.b64url ||
+            data?.result?.non_bounceable?.b64url ||
+            rawAddr;
+          addrCache.set(rawAddr, friendly);
+          return friendly;
+        } catch (e) {
+          console.warn("Address conversion failed:", e);
+          return rawAddr;
+        }
+      }
+
+      // Fetch transaction history
+      async function fetchTransactions(address, append = false) {
+        if (allFetched) return;
+
+        const url = `https://tonapi.io/v2/blockchain/accounts/${address}/transactions?limit=100${
+          beforeLt ? "&before_lt=" + beforeLt : ""
+        }`;
+        document.getElementById("status").textContent =
+          "Fetching transactions...";
+
+        try {
+          const res = await fetch(url);
+          if (!res.ok) throw new Error("API Error " + res.status);
+          const data = await res.json();
+
+          const newTxs = data.transactions || [];
+          if (newTxs.length === 0) {
+            allFetched = true;
+            document.getElementById("status").textContent =
+              "✅ All transactions fetched.";
+            return;
+          }
+
+          if (append) transactions = transactions.concat(newTxs);
+          else transactions = newTxs;
+
+          beforeLt = newTxs[newTxs.length - 1].lt;
+          document.getElementById(
+            "status"
+          ).textContent = `Fetched total: ${transactions.length}`;
+        } catch (error) {
+          console.error("Error fetching transactions:", error);
+          document.getElementById("status").textContent =
+            "❌ Error fetching transactions";
+        }
+      }
+
+      async function renderPage() {
+        const start = currentPage * pageSize;
+        const end = start + pageSize;
+        const pageTxs = transactions.slice(start, end);
+        const txList = document.getElementById("txList");
+        txList.innerHTML = "";
+
+        if (pageTxs.length === 0) {
+          txList.innerHTML = "<p>No transactions found.</p>";
+          document.getElementById("nextBtn").disabled = true;
+          document.getElementById("prevBtn").disabled = currentPage === 0;
+          return;
+        }
+
+        for (const tx of pageTxs) {
+          const time = new Date(tx.utime * 1000).toLocaleString();
+          const hash = tx.hash;
+          const lt = tx.lt;
+          const gas = tx.compute_phase?.gas_fees / 1e9 || 0;
+          const success = tx.success ? "✅ Success" : "❌ Failed";
+
+          // --- IN MESSAGE ---
+          if (tx.in_msg && tx.in_msg.source) {
+            const inValue = (parseFloat(tx.in_msg.value || 0) / 1e9).toFixed(6);
+            const fromRaw = tx.in_msg.source.address || "N/A";
+            const toRaw = tx.in_msg.destination?.address || "N/A";
+            const [from, to] = await Promise.all([
+              convertToUserFriendly(fromRaw),
+              convertToUserFriendly(toRaw),
+            ]);
+
+            const div = document.createElement("div");
+            div.className = "tx";
+            div.innerHTML = `
+              <b>${success}</b> — <b>${inValue} TON (IN)</b><br>
+              <small>🕒 ${time}</small>
+              <small>🔗 Hash: ${hash}</small>
+              <small>🔢 LT: ${lt}</small>
+              <small>📤 From: ${from}</small>
+              <small>📥 To: ${to}</small>
+              <small>⚙️ Gas Used: ${gas}</small>
+              <small>💬 Operation: ${tx.in_msg.decoded_op_name || "—"}</small>
+            `;
+            txList.appendChild(div);
+          }
+
+          // --- OUT MESSAGES ---
+          if (tx.out_msgs && tx.out_msgs.length > 0) {
+            for (const out of tx.out_msgs) {
+              const outValue = (parseFloat(out.value || 0) / 1e9).toFixed(6);
+              const fromRaw = out.source?.address || "N/A";
+              const toRaw = out.destination?.address || "N/A";
+              const [from, to] = await Promise.all([
+                convertToUserFriendly(fromRaw),
+                convertToUserFriendly(toRaw),
+              ]);
+
+              const div = document.createElement("div");
+              div.className = "tx";
+              div.innerHTML = `
+                <b>${success}</b> — <b>${outValue} TON (OUT)</b><br>
+                <small>🕒 ${time}</small>
+                <small>🔗 Hash: ${hash}</small>
+                <small>🔢 LT: ${lt}</small>
+                <small>📤 From: ${from}</small>
+                <small>📥 To: ${to}</small>
+                <small>⚙️ Gas Used: ${gas}</small>
+                <small>💬 Operation: ${out.decoded_op_name || "—"}</small>
+              `;
+              txList.appendChild(div);
+            }
+          }
+        }
+
+        document.getElementById("prevBtn").disabled = currentPage === 0;
+        document.getElementById("nextBtn").disabled =
+          end >= transactions.length && allFetched;
+      }
+
+      
+      document.getElementById("nextBtn").addEventListener("click", async () => {
+        const nextStart = (currentPage + 1) * pageSize;
+        if (nextStart >= transactions.length && !allFetched) {
+          await fetchTransactions(currentAddress, true);
+        }
+        if ((currentPage + 1) * pageSize < transactions.length) {
+          currentPage++;
+          await renderPage();
+        }
+      });
+
+      document.getElementById("prevBtn").addEventListener("click", async () => {
+        if (currentPage > 0) {
+          currentPage--;
+          await renderPage();
+        }
+      });
     </script>
   </body>
 </html>
