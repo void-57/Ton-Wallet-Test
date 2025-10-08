@@ -47,6 +47,7 @@
       }
       #walletSection,
       #explorerSection,
+      #sendSection,
       #balances,
       #transactions {
         background: white;
@@ -54,6 +55,42 @@
         padding: 16px;
         margin-top: 20px;
         box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+      }
+      #sendPrivKey,
+      #sendToAddress,
+      #sendAmount {
+        width: 100%;
+        padding: 8px;
+        font-size: 14px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        margin: 5px 0 10px 0;
+      }
+      #senderBalanceDisplay {
+        background: #e8f5e8;
+        border: 1px solid #28a745;
+        border-radius: 6px;
+        padding: 12px;
+        margin: 10px 0 15px 0;
+        font-family: monospace;
+      }
+      #senderBalanceDisplay p {
+        margin: 5px 0;
+        font-size: 14px;
+      }
+      #senderBalance, #senderAddress {
+        color: #155724;
+        font-weight: bold;
+      }
+      #sendLog {
+        background: #f4f4f4;
+        border: 1px solid #ddd;
+        padding: 10px;
+        border-radius: 6px;
+        margin-top: 15px;
+        white-space: pre-wrap;
+        font-family: monospace;
+        min-height: 100px;
       }
       .tx {
         border-bottom: 1px solid #eee;
@@ -79,7 +116,7 @@
 
     <!-- Generate and Recover -->
     <div id="walletSection">
-      <h2>Generate and Recover TON Address </h2>
+      <h2>Generate and Recover TON Address</h2>
       <button id="generateBtn">Generate</button>
       <button id="recoverBtn">Recover</button>
       <br /><br />
@@ -116,13 +153,48 @@
       </div>
     </div>
 
+    <!-- Send TON Section -->
+    <div id="sendSection">
+      <h2>Send TON (Testnet)</h2>
+
+      <div>
+        <label for="sendPrivKey"><b>Private Key (Hex):</b></label
+        ><br />
+        <input
+          id="sendPrivKey"
+          placeholder="Enter private key hex "
+        />
+      </div>
+
+      <!-- Balance Display -->
+      <div id="senderBalanceDisplay" style="display: none">
+        <p><b>Balance:</b> <span id="senderBalance">-</span> TON</p>
+        <p><b> Address:</b> <span id="senderAddress">-</span></p>
+      </div>
+
+      <div>
+        <label for="sendToAddress"><b>Recipient Address:</b></label
+        ><br />
+        <input id="sendToAddress" placeholder="EQ... or UQ..." />
+      </div>
+
+      <div>
+        <label for="sendAmount"><b>Amount (TON):</b></label
+        ><br />
+        <input id="sendAmount" type="number" step="0.001" placeholder="0.1" />
+      </div>
+
+      <button id="sendTON">Send TON</button>
+
+      <div id="sendLog"></div>
+    </div>
+
     <script src="lib.toncoin.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/tweetnacl/1.0.3/nacl.min.js"></script>
     <script src="https://unpkg.com/tonweb/dist/tonweb.js"></script>
     <script src="tonCrypto.js"></script>
 
     <script>
-      
       const output = document.getElementById("output");
 
       document.getElementById("generateBtn").onclick = async () => {
@@ -148,7 +220,6 @@
         }
       };
 
-    
       const API = "https://toncenter.com/api/v2";
       const API_KEY =
         "62bbf0ea18f197520db44c23d961a4213f373c4c08bf5cb818b722b85192ca63";
@@ -156,7 +227,6 @@
 
       let currentAddress = "";
 
-     
       let transactions = [];
       let beforeLt = null;
       let allFetched = false;
@@ -393,7 +463,6 @@
           end >= transactions.length && allFetched;
       }
 
-      
       document.getElementById("nextBtn").addEventListener("click", async () => {
         const nextStart = (currentPage + 1) * pageSize;
         if (nextStart >= transactions.length && !allFetched) {
@@ -409,6 +478,111 @@
         if (currentPage > 0) {
           currentPage--;
           await renderPage();
+        }
+      });
+
+      // Send TON functionality
+      const tonweb = new TonWeb(
+        new TonWeb.HttpProvider("https://testnet.toncenter.com/api/v2/jsonRPC")
+      );
+
+      const sendLog = (msg) => {
+        console.log(msg);
+        document.getElementById("sendLog").textContent += msg + "\n";
+      };
+
+      const clearSendLog = () => {
+        document.getElementById("sendLog").textContent = "";
+      };
+
+      async function getSenderWallet(privHex) {
+        const seed = TonWeb.utils.hexToBytes(privHex.slice(0, 64));
+        const keyPair = TonWeb.utils.keyPairFromSeed(seed.slice(0, 32));
+
+        // v4R2 wallet
+        const WalletClass = tonweb.wallet.all.v4R2;
+        const wallet = new WalletClass(tonweb.provider, {
+          publicKey: keyPair.publicKey,
+        });
+        const address = await wallet.getAddress();
+        return { wallet, address, keyPair };
+      }
+
+      // Auto-check balance when private key is entered 
+      async function updateSenderBalance() {
+        const privHex = document.getElementById("sendPrivKey").value.trim();
+        const balanceDisplay = document.getElementById("senderBalanceDisplay");
+
+        if (!privHex || (privHex.length !== 64 && privHex.length !== 128)) {
+          balanceDisplay.style.display = "none";
+          return;
+        }
+
+        try {
+          const { address } = await getSenderWallet(privHex);
+          const addr = address.toString(true, true, true);
+
+          const res = await fetch(
+            `https://testnet.toncenter.com/api/v2/getAddressBalance?address=${addr}`
+          );
+          const data = await res.json();
+          const ton = parseFloat(data.result) / 1e9;
+
+          document.getElementById("senderBalance").textContent = ton.toFixed(6);
+          document.getElementById("senderAddress").textContent = addr;
+          balanceDisplay.style.display = "block";
+        } catch (err) {
+          balanceDisplay.style.display = "none";
+          console.error("Balance check error:", err);
+        }
+      }
+
+      
+      document
+        .getElementById("sendPrivKey")
+        .addEventListener("input", updateSenderBalance);
+
+      document.getElementById("sendTON").addEventListener("click", async () => {
+        const privHex = document.getElementById("sendPrivKey").value.trim();
+        const toAddress = document.getElementById("sendToAddress").value.trim();
+        const amount = document.getElementById("sendAmount").value.trim();
+
+        clearSendLog();
+
+        if (!privHex || !toAddress || !amount) {
+          sendLog("⚠️ Please fill all fields first!");
+          return;
+        }
+
+       
+        sendLog(" Processing transaction...");
+
+        try {
+          const { wallet, address, keyPair } = await getSenderWallet(privHex);
+          const seqno = await wallet.methods.seqno().call();
+
+          sendLog(` Sending ${amount} TON...`);
+
+          await wallet.methods
+            .transfer({
+              secretKey: keyPair.secretKey,
+              toAddress: toAddress,
+              amount: TonWeb.utils.toNano(amount),
+              seqno: seqno || 0,
+              payload: null,
+              sendMode: 3,
+            })
+            .send();
+
+          sendLog("✅ Transaction broadcasted successfully!");
+          sendLog(
+            " Transaction should appear in blockchain within 1-2 minutes"
+          );
+
+          
+          setTimeout(updateSenderBalance, 2000);
+        } catch (err) {
+          sendLog(`Send error: ${err.message || err}`);
         }
       });
     </script>
