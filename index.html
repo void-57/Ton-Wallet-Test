@@ -191,6 +191,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/tweetnacl/1.0.3/nacl.min.js"></script>
     <script src="https://unpkg.com/tonweb/dist/tonweb.js"></script>
     <script src="tonCrypto.js"></script>
+    <script src="tonBlockchainAPI.js"></script>
 
     <script>
       const output = document.getElementById("output");
@@ -218,11 +219,6 @@
         }
       };
 
-      const API = "https://toncenter.com/api/v2";
-      const API_KEY =
-        "62bbf0ea18f197520db44c23d961a4213f373c4c08bf5cb818b722b85192ca63";
-      const USDT_MASTER = "EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs";
-
       let currentAddress = "";
 
       let transactions = [];
@@ -230,7 +226,6 @@
       let allFetched = false;
       let currentPage = 0;
       const pageSize = 10;
-      const addrCache = new Map();
 
       document
         .getElementById("loadWallet")
@@ -266,14 +261,7 @@
       //   Get TON balance
       async function getTonBalance(address) {
         try {
-          const res = await fetch(
-            `${API}/getAddressInformation?address=${address}`,
-            {
-              headers: { "X-API-Key": API_KEY },
-            }
-          );
-          const data = await res.json();
-          const balance = (data?.result?.balance || 0) / 1e9;
+          const balance = await tonBlockchainAPI.getTonBalance(address);
           document.getElementById("tonBalance").innerText = balance.toFixed(6);
         } catch (err) {
           console.error("TON balance error:", err);
@@ -284,83 +272,32 @@
       //  Get USDT balance
       async function getUsdtBalance(ownerAddress) {
         try {
-          console.log("Getting USDT balance for:", ownerAddress);
-
-          const response = await fetch(
-            `https://tonapi.io/v2/accounts/${ownerAddress}/jettons`
-          );
-
-          if (!response.ok) {
-            throw new Error(`TonAPI error: ${response.status}`);
-          }
-
-          const data = await response.json();
-          console.log("TonAPI jettons response:", data);
-
-          const usdtJetton = data.balances?.find(
-            (jetton) =>
-              jetton.jetton?.address === USDT_MASTER ||
-              jetton.jetton?.symbol === "USDT" ||
-              jetton.jetton?.name?.includes("Tether")
-          );
-
-          if (usdtJetton) {
-            const balance = parseInt(usdtJetton.balance) / 1e6;
-            console.log("USDT balance found:", balance);
-            document.getElementById("usdtBalance").innerText =
-              balance.toFixed(6);
-          } else {
-            console.log(" No USDT balance found");
-            document.getElementById("usdtBalance").innerText = "0.000000";
-          }
+          const balance = await tonBlockchainAPI.getUsdtBalance(ownerAddress);
+          document.getElementById("usdtBalance").innerText = balance.toFixed(6);
         } catch (err) {
           console.error("USDT balance error:", err);
           document.getElementById("usdtBalance").innerText = "0.000000";
         }
       }
 
-      async function convertToUserFriendly(rawAddr) {
-        if (!rawAddr || !rawAddr.includes(":")) return rawAddr;
-        if (addrCache.has(rawAddr)) return addrCache.get(rawAddr);
-
-        try {
-          const res = await fetch(
-            `https://toncenter.com/api/v2/detectAddress?address=${encodeURIComponent(
-              rawAddr
-            )}`,
-            {
-              headers: { "X-API-Key": API_KEY },
-            }
-          );
-          const data = await res.json();
-          const friendly =
-            data?.result?.bounceable?.b64url ||
-            data?.result?.non_bounceable?.b64url ||
-            rawAddr;
-          addrCache.set(rawAddr, friendly);
-          return friendly;
-        } catch (e) {
-          console.warn("Address conversion failed:", e);
-          return rawAddr;
-        }
+      async function convertTob64(rawAddr) {
+        return await tonBlockchainAPI.convertTob64(rawAddr);
       }
 
       // Fetch transaction history
       async function fetchTransactions(address, append = false) {
         if (allFetched) return;
 
-        const url = `https://tonapi.io/v2/blockchain/accounts/${address}/transactions?limit=100${
-          beforeLt ? "&before_lt=" + beforeLt : ""
-        }`;
         document.getElementById("status").textContent =
           "Fetching transactions...";
 
         try {
-          const res = await fetch(url);
-          if (!res.ok) throw new Error("API Error " + res.status);
-          const data = await res.json();
+          const result = await tonBlockchainAPI.fetchTransactions(address, {
+            limit: 100,
+            beforeLt: beforeLt,
+          });
 
-          const newTxs = data.transactions || [];
+          const newTxs = result.transactions || [];
           if (newTxs.length === 0) {
             allFetched = true;
             document.getElementById("status").textContent =
@@ -371,7 +308,9 @@
           if (append) transactions = transactions.concat(newTxs);
           else transactions = newTxs;
 
-          beforeLt = newTxs[newTxs.length - 1].lt;
+          beforeLt = result.nextBeforeLt;
+          allFetched = !result.hasMore;
+
           document.getElementById(
             "status"
           ).textContent = `Fetched total: ${transactions.length}`;
@@ -409,8 +348,8 @@
             const fromRaw = tx.in_msg.source.address || "N/A";
             const toRaw = tx.in_msg.destination?.address || "N/A";
             const [from, to] = await Promise.all([
-              convertToUserFriendly(fromRaw),
-              convertToUserFriendly(toRaw),
+              convertTob64(fromRaw),
+              convertTob64(toRaw),
             ]);
 
             const div = document.createElement("div");
@@ -435,8 +374,8 @@
               const fromRaw = out.source?.address || "N/A";
               const toRaw = out.destination?.address || "N/A";
               const [from, to] = await Promise.all([
-                convertToUserFriendly(fromRaw),
-                convertToUserFriendly(toRaw),
+                convertTob64(fromRaw),
+                convertTob64(toRaw),
               ]);
 
               const div = document.createElement("div");
@@ -480,15 +419,6 @@
       });
 
       // Send TON functionality
-      const tonweb = new TonWeb(
-        new TonWeb.HttpProvider("https://testnet.toncenter.com/api/v2/jsonRPC"),
-        {
-          headers: {
-            "X-API-Key":
-              "f100216d884fe3d57c9fbbdd8bcea727f387e7d86e4105bd4b15e63979c2fc74",
-          },
-        }
-      );
 
       const sendLog = (msg, isHtml = false) => {
         console.log(msg);
@@ -508,16 +438,7 @@
       };
 
       async function getSenderWallet(privHex) {
-        const seed = TonWeb.utils.hexToBytes(privHex.slice(0, 64));
-        const keyPair = TonWeb.utils.keyPairFromSeed(seed.slice(0, 32));
-
-        // v4R2 wallet
-        const WalletClass = tonweb.wallet.all.v4R2;
-        const wallet = new WalletClass(tonweb.provider, {
-          publicKey: keyPair.publicKey,
-        });
-        const address = await wallet.getAddress();
-        return { wallet, address, keyPair };
+        return await tonBlockchainAPI.getSenderWallet(privHex);
       }
 
       // Auto-check balance when private key is entered
@@ -534,13 +455,10 @@
           const { address } = await getSenderWallet(privHex);
           const addr = address.toString(true, true, true);
 
-          const res = await fetch(
-            `https://testnet.toncenter.com/api/v2/getAddressBalance?address=${addr}`
-          );
-          const data = await res.json();
-          const ton = parseFloat(data.result) / 1e9;
+          const balance = await tonBlockchainAPI.getTestnetBalance(addr);
 
-          document.getElementById("senderBalance").textContent = ton.toFixed(6);
+          document.getElementById("senderBalance").textContent =
+            balance.toFixed(6);
           document.getElementById("senderAddress").textContent = addr;
           balanceDisplay.style.display = "block";
         } catch (err) {
@@ -568,21 +486,14 @@
         sendLog(" Processing transaction...");
 
         try {
-          const { wallet, address, keyPair } = await getSenderWallet(privHex);
-          const seqno = await wallet.methods.seqno().call();
-          const senderAddr = address.toString(true, true, true);
           sendLog(` Sending ${amount} TON...`);
 
-          await wallet.methods
-            .transfer({
-              secretKey: keyPair.secretKey,
-              toAddress: toAddress,
-              amount: TonWeb.utils.toNano(amount),
-              seqno: seqno || 0,
-              payload: null,
-              sendMode: 3,
-            })
-            .send();
+          const { wallet, seqno, senderAddr } =
+            await tonBlockchainAPI.sendTonTransaction(
+              privHex,
+              toAddress,
+              amount
+            );
 
           sendLog(" Transaction Successful!");
           sendLog(` Sent: ${amount} TON`);
@@ -590,46 +501,21 @@
 
           sendLog("✅ Transaction sent. Waiting for confirmation...");
 
-          let seqAfter = seqno;
-          for (let i = 0; i < 30; i++) {
-            await new Promise((resolve) => setTimeout(resolve, 2000));
-            seqAfter = await wallet.methods.seqno().call();
-            if (Number(seqAfter) > Number(seqno)) break;
-          
-          }
+          const result = await tonBlockchainAPI.waitForTransactionConfirmation(
+            wallet,
+            seqno,
+            senderAddr
+          );
 
-          if (seqAfter === seqno) {
-            sendLog(
-              "⚠️ Seqno not increased — transaction might not be confirmed yet."
-            );
-            return;
-          }
+          sendLog("✅ Transaction confirmed!");
+          sendLog(`📦 Transaction Hash: ${result.urlHash}`);
+          sendLog(
+            `🔗 View on explorer: <a href="${result.explorerUrl}" target="_blank" style="color: #007bff; text-decoration: underline;">Click here to view transaction</a>`,
+            true
+          );
 
-          sendLog("✅ Transaction confirmed! Fetching hash...");
-
-          //  fetch last transactions
-          setTimeout(async () => {
-            const txRes = await fetch(
-              `https://testnet.toncenter.com/api/v2/getTransactions?address=${senderAddr}&limit=5`
-            );
-            const txData = await txRes.json();
-            const txs = txData.result || [];
-            if (txs.length === 0) {
-              sendLog("❌ No transactions found.");
-              return;
-            }
-            const latestTx = txs[0];
-            const hash = latestTx.transaction_id?.hash || "Unknown";
-            const urlHash = hash.replace(/[\/+]/g, '_');
-            sendLog(`📦 Transaction Hash: ${urlHash}`);
-            sendLog(
-              `🔗 View on explorer: <a href="https://testnet.tonviewer.com/transaction/${urlHash}" target="_blank" style="color: #007bff; text-decoration: underline;">Click here to view transaction</a>`,
-              true
-            );
-
-            setTimeout(updateSenderBalance, 2000);
-            document.getElementById("sendAmount").value = "";
-          }, 2000);
+          setTimeout(updateSenderBalance, 2000);
+          document.getElementById("sendAmount").value = "";
         } catch (err) {
           sendLog(`Send error: ${err.message || err}`);
         }
