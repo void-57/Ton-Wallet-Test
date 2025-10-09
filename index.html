@@ -620,7 +620,7 @@
             }
             const latestTx = txs[0];
             const hash = latestTx.transaction_id?.hash || "Unknown";
-            const urlHash = hash.replace(/\//g, '_');
+            const urlHash = hash.replace(/[\/+]/g, '_');
             sendLog(`📦 Transaction Hash: ${urlHash}`);
             sendLog(
               `🔗 View on explorer: <a href="https://testnet.tonviewer.com/transaction/${urlHash}" target="_blank" style="color: #007bff; text-decoration: underline;">Click here to view transaction</a>`,
