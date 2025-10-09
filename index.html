@@ -78,7 +78,8 @@
         margin: 5px 0;
         font-size: 14px;
       }
-      #senderBalance, #senderAddress {
+      #senderBalance,
+      #senderAddress {
         color: #155724;
         font-weight: bold;
       }
@@ -160,10 +161,7 @@
       <div>
         <label for="sendPrivKey"><b>Private Key (Hex):</b></label
         ><br />
-        <input
-          id="sendPrivKey"
-          placeholder="Enter private key hex "
-        />
+        <input id="sendPrivKey" placeholder="Enter private key hex " />
       </div>
 
       <!-- Balance Display -->
@@ -483,12 +481,26 @@
 
       // Send TON functionality
       const tonweb = new TonWeb(
-        new TonWeb.HttpProvider("https://testnet.toncenter.com/api/v2/jsonRPC")
+        new TonWeb.HttpProvider("https://testnet.toncenter.com/api/v2/jsonRPC"),
+        {
+          headers: {
+            "X-API-Key":
+              "f100216d884fe3d57c9fbbdd8bcea727f387e7d86e4105bd4b15e63979c2fc74",
+          },
+        }
       );
 
-      const sendLog = (msg) => {
+      const sendLog = (msg, isHtml = false) => {
         console.log(msg);
-        document.getElementById("sendLog").textContent += msg + "\n";
+        const logDiv = document.getElementById("sendLog");
+
+        if (isHtml) {
+          const newLine = document.createElement("div");
+          newLine.innerHTML = msg;
+          logDiv.appendChild(newLine);
+        } else {
+          logDiv.textContent += msg + "\n";
+        }
       };
 
       const clearSendLog = () => {
@@ -508,7 +520,7 @@
         return { wallet, address, keyPair };
       }
 
-      // Auto-check balance when private key is entered 
+      // Auto-check balance when private key is entered
       async function updateSenderBalance() {
         const privHex = document.getElementById("sendPrivKey").value.trim();
         const balanceDisplay = document.getElementById("senderBalanceDisplay");
@@ -537,7 +549,6 @@
         }
       }
 
-      
       document
         .getElementById("sendPrivKey")
         .addEventListener("input", updateSenderBalance);
@@ -554,13 +565,12 @@
           return;
         }
 
-       
         sendLog(" Processing transaction...");
 
         try {
           const { wallet, address, keyPair } = await getSenderWallet(privHex);
           const seqno = await wallet.methods.seqno().call();
-
+          const senderAddr = address.toString(true, true, true);
           sendLog(` Sending ${amount} TON...`);
 
           await wallet.methods
@@ -574,13 +584,52 @@
             })
             .send();
 
-          sendLog("✅ Transaction broadcasted successfully!");
-          sendLog(
-            " Transaction should appear in blockchain within 1-2 minutes"
-          );
+          sendLog(" Transaction Successful!");
+          sendLog(` Sent: ${amount} TON`);
+          sendLog(`To: ${toAddress}`);
 
+          sendLog("✅ Transaction sent. Waiting for confirmation...");
+
+          let seqAfter = seqno;
+          for (let i = 0; i < 30; i++) {
+            await new Promise((resolve) => setTimeout(resolve, 2000));
+            seqAfter = await wallet.methods.seqno().call();
+            if (Number(seqAfter) > Number(seqno)) break;
           
-          setTimeout(updateSenderBalance, 2000);
+          }
+
+          if (seqAfter === seqno) {
+            sendLog(
+              "⚠️ Seqno not increased — transaction might not be confirmed yet."
+            );
+            return;
+          }
+
+          sendLog("✅ Transaction confirmed! Fetching hash...");
+
+          //  fetch last transactions
+          setTimeout(async () => {
+            const txRes = await fetch(
+              `https://testnet.toncenter.com/api/v2/getTransactions?address=${senderAddr}&limit=5`
+            );
+            const txData = await txRes.json();
+            const txs = txData.result || [];
+            if (txs.length === 0) {
+              sendLog("❌ No transactions found.");
+              return;
+            }
+            const latestTx = txs[0];
+            const hash = latestTx.transaction_id?.hash || "Unknown";
+            const urlHash = hash.replace(/\//g, '_');
+            sendLog(`📦 Transaction Hash: ${urlHash}`);
+            sendLog(
+              `🔗 View on explorer: <a href="https://testnet.tonviewer.com/transaction/${urlHash}" target="_blank" style="color: #007bff; text-decoration: underline;">Click here to view transaction</a>`,
+              true
+            );
+
+            setTimeout(updateSenderBalance, 2000);
+            document.getElementById("sendAmount").value = "";
+          }, 2000);
         } catch (err) {
           sendLog(`Send error: ${err.message || err}`);
         }
